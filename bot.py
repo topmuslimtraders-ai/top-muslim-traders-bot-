@@ -54,17 +54,28 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # SOZLAMALAR
 # ============================================================
-BOT_TOKEN = "8400840360:AAE1_wyWX3NTFhteoYs5oum_PSmbzypMEPs"
-ADMIN_PROFILE_LINK = "https://t.me/Top_Muslim_Traders_Admin"
-ADMIN_CHAT_ID = 7005619203
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN topilmadi. Uni Railway Variables'ga qo'shing.")
+
+ADMIN_PROFILE_LINK = os.environ.get("ADMIN_PROFILE_LINK", "https://t.me/Top_Muslim_Traders_Admin")
+
+_admin_chat_id_raw = os.environ.get("ADMIN_CHAT_ID")
+if not _admin_chat_id_raw:
+    raise RuntimeError("ADMIN_CHAT_ID topilmadi.")
+ADMIN_CHAT_ID = int(_admin_chat_id_raw)
 
 WALLETS = {
-    "trc20": "TNC3Z4sAzWh2rykt54TG5ks1zkz7gZF7ze",
-    "bep20": "0xc666deccbe959eed0fcf960b477fe79d97e652cc",
+    "trc20": os.environ.get("WALLET_TRC20", "TNC3Z4sAzWh2rykt54TG5ks1zkz7gZF7ze"),
+    "bep20": os.environ.get("WALLET_BEP20", "0xc666deccbe959eed0fcf960b477fe79d97e652cc"),
 }
 
-VIDEO_GROUP_ID = -1003993632093    # Video darslik guruhi
-VIP_GROUP_ID = -1003995400632      # VIP Signal guruhi
+_video_group_raw = os.environ.get("VIDEO_GROUP_ID")
+_vip_group_raw = os.environ.get("VIP_GROUP_ID")
+if not _video_group_raw or not _vip_group_raw:
+    raise RuntimeError("VIDEO_GROUP_ID va VIP_GROUP_ID Railway Variables'ida bo'lishi shart.")
+VIDEO_GROUP_ID = int(_video_group_raw)   # Video darslik guruhi
+VIP_GROUP_ID = int(_vip_group_raw)       # VIP Signal guruhi
 
 DATA_FILE = "data.json"
 REMINDER_WINDOW_DAYS = 3           # Muddat tugashiga necha kun qolganda eslatma boshlansin
