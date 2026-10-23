@@ -2,29 +2,16 @@
 """
 Telegram Obuna / Guruh Sotish Boti — "Top Muslim Traders"
 ------------------------------------------------------------
-Oqim:
-1) /start -> Video darslik / VIP Signal / Admin bilan bog'lanish
-2) Mahsulot (yoki VIP tarifi) tanlanadi -> narx + shu tarifga xos tavsif +
-   xavfsizlik eslatmasi + to'lov tarmog'i tugmalari (BEP20 / TRC20) chiqadi
-3) Tarmoq tanlanadi -> tegishli hamyon manzili ko'rsatiladi
-4) Foydalanuvchi to'lov chekining RASMINI botga yuboradi
-5) Bot "Admin tasdig'ini kuting" deydi va chekni admin(lar)ga yuboradi
-6) Admin /tasdiqla <user_id> <reja_kodi> orqali tasdiqlaydi
-   -> bot avtomatik bir martalik guruh havolasini yaratib foydalanuvchiga yuboradi
-7) Foydalanuvchi guruhga qo'shilgach, bot guruh ichida duo/tabrik xabari yozadi
-8) Muddat tugashiga 3 kun qolganda, bot har 6 soatda foydalanuvchiga eslatma yuboradi
-9) Muddat tugagach, bot avtomatik guruhdan chiqarib tashlaydi
-
-MUHIM: Bot VIDEO_GROUP_ID va VIP_GROUP_ID guruhlarida ADMIN bo'lishi hamda
-"a'zolarni qo'shish/chiqarish" (Invite Users via Link, Ban Users) huquqiga
-ega bo'lishi SHART. Guruhga qo'shish bo'yicha batafsil qo'llanma javobning
-oxirida (kod tashqarisida) berilgan.
-
 O'rnatish:
     pip install "python-telegram-bot[job-queue]" --upgrade
 
 Ishga tushirish:
     python bot.py
+
+Railway Variables:
+    BOT_TOKEN, ADMIN_CHAT_ID, VIDEO_GROUP_ID, VIP_GROUP_ID,
+    DATA_FILE=/data/data.json   (Volume /data ga ulangan bo'lishi kerak)
+    ADMIN_BOT_LINK (ixtiyoriy)  — standart: https://t.me/Hanif_Trader_bot
 """
 
 import json
@@ -58,7 +45,9 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN topilmadi. Uni Railway Variables'ga qo'shing.")
 
-ADMIN_PROFILE_LINK = os.environ.get("ADMIN_PROFILE_LINK", "https://t.me/Top_Muslim_Traders_Admin")
+# "Admin bilan bog'lanish" bosilganda o'tadigan bot (faqat havola, token kerak emas)
+ADMIN_BOT_LINK = os.environ.get("ADMIN_BOT_LINK", "https://t.me/Hanif_Trader_bot")
+ADMIN_PROFILE_LINK = ADMIN_BOT_LINK   # xavfsizlik eslatmasida ham shu bot ko'rsatiladi
 
 _admin_chat_id_raw = os.environ.get("ADMIN_CHAT_ID")
 if not _admin_chat_id_raw:
@@ -74,11 +63,11 @@ _video_group_raw = os.environ.get("VIDEO_GROUP_ID")
 _vip_group_raw = os.environ.get("VIP_GROUP_ID")
 if not _video_group_raw or not _vip_group_raw:
     raise RuntimeError("VIDEO_GROUP_ID va VIP_GROUP_ID Railway Variables'ida bo'lishi shart.")
-VIDEO_GROUP_ID = int(_video_group_raw)   # Video darslik guruhi
-VIP_GROUP_ID = int(_vip_group_raw)       # VIP Signal guruhi
+VIDEO_GROUP_ID = int(_video_group_raw)
+VIP_GROUP_ID = int(_vip_group_raw)
 
-DATA_FILE = "data.json"
-REMINDER_WINDOW_DAYS = 3           # Muddat tugashiga necha kun qolganda eslatma boshlansin
+DATA_FILE = os.environ.get("DATA_FILE", "data.json")
+REMINDER_WINDOW_DAYS = 3
 CHECK_INTERVAL_SECONDS = 6 * 60 * 60   # Har 6 soatda tekshiruv
 
 # ------------------------------------------------------------
@@ -187,6 +176,9 @@ def load_data():
 
 
 def save_data(data):
+    folder = os.path.dirname(DATA_FILE)
+    if folder:
+        os.makedirs(folder, exist_ok=True)
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -196,11 +188,13 @@ def add_subscription(user_id: int, chat_id: int, plan_label: str, days):
     expiry = None
     if days is not None:
         expiry = (datetime.utcnow() + timedelta(days=days)).isoformat()
-    data["subs"][str(user_id)] = {
+    # Kalit: user + guruh, shunda video va VIP bir-birining ustiga yozilmaydi
+    data["subs"][f"{user_id}:{chat_id}"] = {
+        "user_id": user_id,
         "chat_id": chat_id,
         "plan": plan_label,
         "expiry": expiry,
-        "reminded": False,      # 3-kunlik eslatma jarayoni boshlanganini belgilaydi
+        "reminded": False,
     }
     save_data(data)
 
@@ -228,7 +222,8 @@ def main_menu_keyboard():
     keyboard = [
         [InlineKeyboardButton(VIDEO_DARSLIK["label"], callback_data="video_darslik")],
         [InlineKeyboardButton("📈 VIP Signal", callback_data="vip_menu")],
-        [InlineKeyboardButton("👤 Admin bilan bog'lanish", callback_data="contact_admin")],
+        # url= bo'lgani uchun bosilganda to'g'ridan-to'g'ri boshqa botga o'tadi
+        [InlineKeyboardButton("👤 Admin bilan bog'lanish", url=ADMIN_BOT_LINK)],
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -256,19 +251,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-    user = query.from_user
-
-    if data == "contact_admin":
-        text = (
-            "👤 <b>Admin bilan bog'lanish</b>\n\n"
-            f"Savollaringiz yoki to'lov tasdig'i bo'yicha to'g'ridan-to'g'ri "
-            f"murojaat qiling:\n{ADMIN_PROFILE_LINK}"
-        )
-        keyboard = [[InlineKeyboardButton("⬅️ Orqaga", callback_data="back_to_start")]]
-        await query.edit_message_text(
-            text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.HTML
-        )
-        return
 
     if data == "back_to_start":
         context.user_data.clear()
@@ -284,7 +266,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 1-qadam: mahsulot/tarif tanlandi -> narx + tavsif + xavfsizlik eslatmasi + tarmoq tugmalari
     if data == "video_darslik" or data in VIP_PLANS:
         plan_code = "video" if data == "video_darslik" else data
         label, price = get_plan_info(plan_code)
@@ -304,7 +285,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 2-qadam: tarmoq tanlandi -> hamyon manzilini ko'rsatish
     if data.startswith("net_"):
         _, network, plan_code = data.split("_", 2)
         label, price = get_plan_info(plan_code)
@@ -396,13 +376,13 @@ async def on_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 # ============================================================
-# ADMIN: TO'LOVNI TASDIQLASH -> AVTOMATIK GURUHGA QO'SHISH
+# ADMIN: TO'LOVNI TASDIQLASH
 # ============================================================
 async def tasdiqla(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_CHAT_ID:
         return
 
-    if len(context.args) != 2:
+    if len(context.args) != 2 or not context.args[0].isdigit():
         await update.message.reply_text("Foydalanish: /tasdiqla <user_id> <reja_kodi>")
         return
 
@@ -444,67 +424,67 @@ async def tasdiqla(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# HAR 6 SOATDA: MUDDAT TUGAGANLARNI CHIQARISH VA
-# MUDDATI YAQINLASHGANLARGA ESLATMA YUBORISH
+# HAR 6 SOATDA: MUDDATI TUGAGANLARNI CHIQARISH + ESLATMA
 # ============================================================
 async def check_subscriptions(context: ContextTypes.DEFAULT_TYPE):
     data = load_data()
     now = datetime.utcnow()
-    expired_ids = []
+    expired_keys = []
     changed = False
 
-    for user_id_str, sub in data["subs"].items():
-        if sub["expiry"] is None:
-            continue  # cheksiz reja, tekshirilmaydi
+    logger.info("Obunalar tekshirilmoqda: %d ta yozuv", len(data["subs"]))
 
-        expiry_dt = datetime.fromisoformat(sub["expiry"])
-        remaining = expiry_dt - now
-        user_id = int(user_id_str)
+    for key, sub in list(data["subs"].items()):
+        if sub.get("expiry") is None:
+            continue  # cheksiz reja
+
+        user_id = sub.get("user_id") or int(key.split(":")[0])
         chat_id = sub["chat_id"]
+        remaining = datetime.fromisoformat(sub["expiry"]) - now
 
         # 1) Muddat tugagan -> guruhdan chiqarish
         if remaining.total_seconds() <= 0:
             try:
                 await context.bot.ban_chat_member(chat_id, user_id)
-                await context.bot.unban_chat_member(chat_id, user_id)
+                await context.bot.unban_chat_member(chat_id, user_id, only_if_banned=True)
+            except TelegramError as e:
+                logger.error("Chiqarishda xatolik (user %s): %s", user_id, e)
+                continue   # yozuv saqlanadi, keyingi tekshiruvda qayta urinadi
+
+            expired_keys.append(key)
+            logger.info("Muddati tugadi va chiqarildi: %s", user_id)
+            try:
                 await context.bot.send_message(
                     user_id,
                     f"⏰ <b>«{sub['plan']}» obunangiz muddati tugadi</b> va "
                     "guruhdan chiqarildingiz.\n\n"
-                    "Xizmatimizdan qayta foydalanish uchun /start tugmasini "
-                    "bosing va tarifni yangilang.",
+                    "Qayta foydalanish uchun /start bosing va tarifni yangilang.",
                     parse_mode=ParseMode.HTML,
                 )
-                logger.info("Muddati tugadi va chiqarildi: %s", user_id)
             except TelegramError as e:
-                logger.error("Chiqarishda xatolik (user %s): %s", user_id, e)
-            expired_ids.append(user_id_str)
+                logger.warning("Xabar yuborilmadi (user %s): %s", user_id, e)
             continue
 
-        # 2) Muddat tugashiga REMINDER_WINDOW_DAYS kun yoki kamroq qoldi -> eslatma
+        # 2) Muddat yaqinlashdi -> eslatma
         if remaining <= timedelta(days=REMINDER_WINDOW_DAYS):
             days_left = remaining.days
             hours_left = remaining.seconds // 3600
-            qolgan_vaqt = f"{days_left} kun {hours_left} soat" if days_left > 0 else f"{hours_left} soat"
-
+            qolgan = f"{days_left} kun {hours_left} soat" if days_left > 0 else f"{hours_left} soat"
             try:
                 await context.bot.send_message(
                     user_id,
                     f"⏳ <b>Eslatma:</b> «{sub['plan']}» obunangiz muddati "
-                    f"tugashiga <b>{qolgan_vaqt}</b> qoldi.\n\n"
-                    "Xizmatdan uzluksiz foydalanishni davom ettirish uchun "
-                    "/start orqali tarifni yangilab qo'yishingizni tavsiya "
-                    "qilamiz.",
+                    f"tugashiga <b>{qolgan}</b> qoldi.\n\n"
+                    "Uzluksiz foydalanish uchun /start orqali tarifni yangilang.",
                     parse_mode=ParseMode.HTML,
                 )
                 sub["reminded"] = True
                 changed = True
             except TelegramError as e:
-                logger.error("Eslatma yuborishda xatolik (user %s): %s", user_id, e)
+                logger.error("Eslatma xatosi (user %s): %s", user_id, e)
 
-    if expired_ids:
-        for uid in expired_ids:
-            del data["subs"][uid]
+    for key in expired_keys:
+        del data["subs"][key]
         changed = True
 
     if changed:
